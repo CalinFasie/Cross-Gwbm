@@ -1,0 +1,37 @@
+CREATE PROCEDURE ImportXMLFile
+    @FilePath NVARCHAR(255)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @SQL NVARCHAR(MAX);
+    DECLARE @XML XML;
+
+    -- Construirea dinamică a comenzii de citire XML
+    SET @SQL = N'
+    SELECT @XML_OUT = CONVERT(XML, BulkColumn)
+    FROM OPENROWSET(BULK ''' + @FilePath + ''', SINGLE_BLOB) AS X;';
+
+    -- Executarea SQL-ului și obținerea XML-ului
+    EXEC sp_executesql @SQL, N'@XML_OUT XML OUTPUT', @XML OUTPUT;
+
+    -- Inserarea datelor extrase
+    INSERT INTO ImportXMLData (accountnr, intercountrycode, name1, name2, name3, personal_tax, region, salutationdescription, street, taxnumber, town, zipcode)
+    SELECT
+        T.c.value('(accountnr/text())[1]', 'NVARCHAR(50)'),
+        T.c.value('(intcountrycode/text())[1]', 'NVARCHAR(10)'),
+        T.c.value('(name1/text())[1]', 'NVARCHAR(100)'),
+        T.c.value('(name2/text())[1]', 'NVARCHAR(100)'),
+        T.c.value('(name3/text())[1]', 'NVARCHAR(100)'),
+        COALESCE(T.c.value('(personal_id/text())[1]', 'NVARCHAR(50)'), '') + ' ' +
+        COALESCE(T.c.value('(taxnumber/text())[1]', 'NVARCHAR(50)'), ''),
+        T.c.value('(region/text())[1]', 'NVARCHAR(50)'),
+        T.c.value('(salutationdescription/text())[1]', 'NVARCHAR(50)'),
+        T.c.value('(street/text())[1]', 'NVARCHAR(255)'),
+        T.c.value('(taxnumber/text())[1]', 'NVARCHAR(50)'),
+        T.c.value('(town/text())[1]', 'NVARCHAR(100)'),
+        T.c.value('(zipcode/text())[1]', 'NVARCHAR(20)')
+    FROM @XML.nodes('/RecordSet/DataList/customertoaccounting') AS T(c);
+
+    -- Înregistrare în log
+    INSERT INTO ImportLog (filename, status) VALUES (@FilePath, 'Success');
+END;
