@@ -1,37 +1,52 @@
-CREATE PROCEDURE ImportXMLFile
+ALTER PROCEDURE [dbo].[ImportXMLTerti]
     @FilePath NVARCHAR(255)
 AS
 BEGIN
     SET NOCOUNT ON;
+
     DECLARE @SQL NVARCHAR(MAX);
     DECLARE @XML XML;
 
-    -- Construirea dinamică a comenzii de citire XML
-    SET @SQL = N'
-    SELECT @XML_OUT = CONVERT(XML, BulkColumn)
-    FROM OPENROWSET(BULK ''' + @FilePath + ''', SINGLE_BLOB) AS X;';
+    BEGIN TRY
+        -- Încarcă fișierul XML
+        SET @SQL = N'
+        SELECT @XML_OUT = CONVERT(XML, BulkColumn)
+        FROM OPENROWSET(BULK ''' + @FilePath + ''', SINGLE_BLOB) AS X;';
+        EXEC sp_executesql @SQL, N'@XML_OUT XML OUTPUT', @XML OUTPUT;
 
-    -- Executarea SQL-ului și obținerea XML-ului
-    EXEC sp_executesql @SQL, N'@XML_OUT XML OUTPUT', @XML OUTPUT;
+        -- Inserează DOAR înregistrările care nu există deja în tabel (după accountnr)
+        INSERT INTO dbo._Import_terti_xml (
+            accountnr, intercountrycode, name1, name2, name3, id_number, region, salutationdescription, street, town, zipcode
+        )
+        SELECT
+            T.c.value('(accountnr/text())[1]', 'NVARCHAR(50)'),
+            T.c.value('(intcountrycode/text())[1]', 'NVARCHAR(10)'),
+            T.c.value('(name1/text())[1]', 'NVARCHAR(100)'),
+            T.c.value('(name2/text())[1]', 'NVARCHAR(100)'),
+            T.c.value('(name3/text())[1]', 'NVARCHAR(100)'),
+            COALESCE(T.c.value('(personal_id/text())[1]', 'NVARCHAR(50)'), '') + ' ' +
+            COALESCE(T.c.value('(taxnumber/text())[1]', 'NVARCHAR(50)'), ''),
+            T.c.value('(region/text())[1]', 'NVARCHAR(50)'),
+            T.c.value('(salutationdescription/text())[1]', 'NVARCHAR(50)'),
+            T.c.value('(street/text())[1]', 'NVARCHAR(255)'),
+            T.c.value('(town/text())[1]', 'NVARCHAR(100)'),
+            T.c.value('(zipcode/text())[1]', 'NVARCHAR(20)')
+        FROM @XML.nodes('/RecordSet/DataList/customertoaccounting') AS T(c)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dbo._Import_terti_xml dest
+            WHERE dest.accountnr = T.c.value('(accountnr/text())[1]', 'NVARCHAR(50)')
+        );
 
-    -- Inserarea datelor extrase
-    INSERT INTO ImportXMLData (accountnr, intercountrycode, name1, name2, name3, personal_tax, region, salutationdescription, street, taxnumber, town, zipcode)
-    SELECT
-        T.c.value('(accountnr/text())[1]', 'NVARCHAR(50)'),
-        T.c.value('(intcountrycode/text())[1]', 'NVARCHAR(10)'),
-        T.c.value('(name1/text())[1]', 'NVARCHAR(100)'),
-        T.c.value('(name2/text())[1]', 'NVARCHAR(100)'),
-        T.c.value('(name3/text())[1]', 'NVARCHAR(100)'),
-        COALESCE(T.c.value('(personal_id/text())[1]', 'NVARCHAR(50)'), '') + ' ' +
-        COALESCE(T.c.value('(taxnumber/text())[1]', 'NVARCHAR(50)'), ''),
-        T.c.value('(region/text())[1]', 'NVARCHAR(50)'),
-        T.c.value('(salutationdescription/text())[1]', 'NVARCHAR(50)'),
-        T.c.value('(street/text())[1]', 'NVARCHAR(255)'),
-        T.c.value('(taxnumber/text())[1]', 'NVARCHAR(50)'),
-        T.c.value('(town/text())[1]', 'NVARCHAR(100)'),
-        T.c.value('(zipcode/text())[1]', 'NVARCHAR(20)')
-    FROM @XML.nodes('/RecordSet/DataList/customertoaccounting') AS T(c);
-
-    -- Înregistrare în log
-    INSERT INTO ImportLog (filename, status) VALUES (@FilePath, 'Success');
+        -- Log de succes
+        INSERT INTO dbo.ImportXMLLog (filename, status, message)
+        VALUES (@FilePath, 'Success', 'Import complet fără duplicate.');
+    END TRY
+    BEGIN CATCH
+        -- Log în caz de eroare
+        INSERT INTO dbo.ImportXMLLog (filename, status, message)
+        VALUES (@FilePath, 'Error',
+            ERROR_MESSAGE() + ' (Line: ' + CAST(ERROR_LINE() AS NVARCHAR) + ', Code: ' + CAST(ERROR_NUMBER() AS NVARCHAR) + ')'
+        );
+    END CATCH
 END;
+
