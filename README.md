@@ -16,3 +16,4 @@ https://chatgpt.com/c/67b58bc4-a358-8006-bdff-4ce57c1e7e87
 - Scriptul2 ImportTertiXml.ps1 se afla pe srv-sql:\E\ImportXML\
   - apeleaza Scriptul 1 (procedura [dbo].[ImportXMLTerti])
 
+- Apoi se ruleaza import_TERTI pentru inserarea tertilor in Asis
